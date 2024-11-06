@@ -9,5 +9,5 @@
     <a href="https://github.com/Scrofic/YT_DL/blob/main/README.md">
         <img src="https://raw.githubusercontent.com/Scrofic/YT_DL/main/icon.ico" width="10%" ,alt="YT_DL">
     </a>
-    <center>Copyright © 2024 Scrofic™</center>
 </div>
+<center>Copyright © 2024 Scrofic™</center>
