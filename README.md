@@ -10,4 +10,6 @@
         <img src="https://raw.githubusercontent.com/Scrofic/YT_DL/main/icon.ico" width="10%" ,alt="YT_DL">
     </a>
 </div>
-<center>Copyright © 2024 Scrofic™</center>
+<center>
+        <strong>Copyright © 2024 Scrofic™</strong>
+</center>
