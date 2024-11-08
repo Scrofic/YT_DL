@@ -5,5 +5,9 @@
 * [YT_DL-1.0](https://github.com/Scrofic/YT_DL/raw/main/winx64%20YT_DL-1.0.7z)
 * [YT_DL-1.1](https://github.com/Scrofic/YT_DL/raw/main/winx64%20YT_DL-1.1.7z)
 * [YT_DL-1.2](https://github.com/Scrofic/YT_DL/raw/main/winx64%20YT_DL-1.2.7z)  
-![](https://github.com/Scrofic/YT_DL/raw/main/icon.ico)
-<center>Copyright © 2024 Scrofic™</center>
+<div>
+        <img src="https://raw.githubusercontent.com/Scrofic/YT_DL/main/icon.ico" width="20%" ,alt="YT_DL">
+</div>
+<center>
+        <strong>Copyright © 2024 Scrofic™</strong>
+</center>
