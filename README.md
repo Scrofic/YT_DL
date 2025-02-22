@@ -11,5 +11,5 @@
         <img src="https://raw.githubusercontent.com/Scrofic/YT_DL/main/icon.ico" width="15%" ,alt="YT_DL">
 </div>
 <center>
-        <strong>Copyright © 2024 Scrofic™</strong>
+        <strong>Copyright © 2025 Scrofic™</strong>
 </center>
