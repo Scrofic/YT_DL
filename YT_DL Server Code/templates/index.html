@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh_hant">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YT_DL</title>
+    <link rel="icon" href="{{ url_for('static', filename='icon.ico') }}" type="image/x-icon">
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #e8f0f2;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        .container {
+            background-color: #fff;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.2);
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+            box-sizing: border-box;
+        }
+        h1 {
+            margin-bottom: 20px;
+            color: #333;
+            font-size: 24px;
+        }
+        form {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        label {
+            width: 100%;
+            text-align: left;
+            margin-bottom: 5px;
+            color: #555;
+        }
+        input, select, button {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+            box-sizing: border-box;
+        }
+        input:focus, select:focus, button:focus {
+            outline: none;
+            border-color: #3498db;
+        }
+        button {
+            background-color: #3498db;
+            color: white;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        /* 旋轉加載動畫 */
+        .spinner {
+            margin: 20px auto;
+            width: 50px;
+            height: 50px;
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .status-message {
+            margin-top: 20px;
+            font-size: 16px;
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Youtube 下載器</h1>
+        <form id="download-form">
+            <label for="url">網址:</label>
+            <input type="text" id="url" name="url" placeholder="輸入 YouTube 連結" required>
+            <label for="format">格式:</label>
+            <select id="format" name="format">
+                <option value="mp3">MP3</option>
+                <option value="mp4">MP4</option>
+            </select>
+            <button type="submit">下載</button>
+        </form>
+        
+        <!-- 旋轉加載動畫 -->
+        <div class="spinner" id="spinner" style="display: none;"></div>
+
+        <footer style="position: absolute; bottom: 10px; right: 10px; font-size: 14px; color: #777;">
+            Copyright © 2025 Scrofic™
+        </footer>
+        
+        <div class="status-message" id="status-message"></div>
+    </div>
+    <script>
+        const spinner = document.getElementById('spinner');
+        const statusMessage = document.getElementById('status-message');
+        const form = document.getElementById('download-form');
+
+        form.addEventListener('submit', function(event) {
+            event.preventDefault();
+            statusMessage.textContent = '';
+            spinner.style.display = 'block';  // 顯示旋轉動畫
+
+            const formData = new FormData(form);
+            fetch('/download', {
+                method: 'POST',
+                body: formData
+            })
+            .then(function(response) {
+                if (!response.ok) {
+                    throw new Error("網路錯誤：" + response.status);
+                }
+                // 使用 blob() 取得二進位資料（避免解析成 JSON）
+                return response.blob().then(blob => ({
+                    blob: blob,
+                    disposition: response.headers.get("Content-Disposition")
+                }));
+            })
+            .then(function({ blob, disposition }) {
+                spinner.style.display = 'none';
+                // 從 header 取得檔案名稱 (若有設定)
+                let filename = "downloaded_file";
+                if (disposition) {
+                    const regex = /filename\*=UTF-8''(.+)/;
+                    const matches = regex.exec(disposition);
+                    if (matches && matches[1]) {
+                        filename = decodeURIComponent(matches[1]);
+                    }
+                }
+                // 利用 blob 產生臨時 URL 並建立下載鏈結
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.style.display = "none";
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                statusMessage.textContent = '下載完成！';
+            })
+            .catch(function(error) {
+                spinner.style.display = 'none';
+                statusMessage.textContent = '下載失敗：' + error.message;
+            });
+        });
+    </script>
+</body>
+</html>

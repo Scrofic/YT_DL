@@ -1,0 +1,378 @@
+[檔案結構]：
+-------------------------------------------
+youtube_downloader/
+├── downloads/
+├── static/
+│   └──icon.ico
+├── templates/
+│   └──index.html
+├── app.py
+└── ffmpeg.exe
+
+請自行下載ffmpeg.exe : 
+https://github.com/BtbN/FFmpeg-Builds/releases
+解壓縮後可以在bin資料夾可以找到ffmpeg.exe檔案
+
+===========================================
+
+[app.py 檔案]：
+-------------------------------------------
+import os
+import sys
+from uuid import uuid4
+from flask import Flask, request, render_template, jsonify, Response
+from urllib.parse import quote
+import yt_dlp as youtube_dl
+
+# ----------------------------------------------------------------
+# 輸出過濾器：過濾掉包含 "Running on" 的訊息
+# ----------------------------------------------------------------
+class FilterStream:
+    def __init__(self, stream):
+        self.stream = stream
+    def write(self, s):
+        if "Running on" in s:
+            return  # 過濾掉包含 "Running on" 的訊息
+        self.stream.write(s)
+    def flush(self):
+        self.stream.flush()
+
+sys.stdout = FilterStream(sys.stdout)
+sys.stderr = FilterStream(sys.stderr)
+
+# ----------------------------------------------------------------
+# 資源路徑處理：根據執行環境（開發 vs 打包）返回正確路徑
+# ----------------------------------------------------------------
+def resource_path(relative_path):
+    try:
+        base_path = sys._MEIPASS  # cx_Freeze or PyInstaller 打包後會存在
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
+# ----------------------------------------------------------------
+# Flask 與應用程式邏輯
+# ----------------------------------------------------------------
+# 直接使用已打包進 .exe 中的 yt_dlp 模組
+app = Flask(__name__,
+            static_folder=resource_path("static"),
+            template_folder=resource_path("templates"))
+
+# 使用 tasks 字典存放每個下載任務的進度與狀態
+tasks = {}
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/download', methods=['POST'])
+def download():
+    # 為此次下載請求生成一個隨機 task_id
+    task_id = str(uuid4())
+    tasks[task_id] = {'progress': '0%', 'completed': False}
+
+    url_link = request.form['url']
+    fmt = request.form['format']
+
+    # 根據格式選擇不同的 yt-dlp 參數
+    if fmt == 'mp3':
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'outtmpl': f'downloads/%(title)s_{task_id}.%(ext)s',
+            'ffmpeg_location': resource_path('ffmpeg.exe'),
+            'progress_hooks': [lambda d: progress_hook(d, task_id)],
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+        }
+    else:  # mp4 模式
+        ydl_opts = {
+            'format': 'bestvideo+bestaudio/best',
+            'outtmpl': f'downloads/%(title)s_{task_id}.%(ext)s',
+            'ffmpeg_location': resource_path('ffmpeg.exe'),
+            'progress_hooks': [lambda d: progress_hook(d, task_id)],
+            'merge_output_format': 'mp4'
+        }
+
+    try:
+        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+            info_dict = ydl.extract_info(url_link, download=True)
+            file_path = ydl.prepare_filename(info_dict)
+
+        # 如果是 mp3 模式，更新檔案副檔名
+        if fmt == 'mp3':
+            file_path = os.path.splitext(file_path)[0] + ".mp3"
+
+        tasks[task_id]['completed'] = True
+
+        if not os.path.exists(file_path):
+            app.logger.error(f"檔案不存在：{file_path}")
+            return jsonify({'status': '失敗', 'error': f"檔案不存在：{file_path}", 'task_id': task_id}), 404
+
+        def generate():
+            try:
+                with open(file_path, "rb") as f:
+                    while True:
+                        chunk = f.read(8192)
+                        if not chunk:
+                            break
+                        yield chunk
+            finally:
+                try:
+                    os.remove(file_path)
+                    app.logger.info(f"已刪除檔案：{file_path}")
+                except Exception as e:
+                    app.logger.error(f"刪除檔案 {file_path} 時發生錯誤：{e}")
+
+        response = Response(generate(), mimetype="application/octet-stream")
+        filename = os.path.basename(file_path)
+        quoted_filename = quote(filename)
+        response.headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{quoted_filename}"
+        response.headers["X-Task-ID"] = task_id
+
+        return response
+
+    except Exception as e:
+        tasks[task_id]['completed'] = True
+        app.logger.error(f"下載失敗：{str(e)}")
+        return jsonify({'status': '失敗', 'error': str(e), 'task_id': task_id}), 500
+
+def progress_hook(d, task_id):
+    if d.get('status') == 'downloading':
+        tasks[task_id]['progress'] = d.get('_percent_str', tasks[task_id]['progress'])
+    elif d.get('status') == 'finished':
+        tasks[task_id]['progress'] = '100%'
+
+@app.route('/progress', methods=['GET'])
+def progress_status():
+    task_id = request.args.get('task_id')
+    if not task_id:
+        return jsonify({'status': '失敗', 'error': '缺少 task_id 參數'}), 400
+    task_info = tasks.get(task_id)
+    if not task_info:
+        return jsonify({'status': '失敗', 'error': '未知的 task_id'}), 404
+    return jsonify(task_info)
+
+if __name__ == '__main__':
+    if not os.path.exists('downloads'):
+        os.makedirs('downloads')
+    try:
+        app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
+    except KeyboardInterrupt:
+        print("\n服務器偵測到 Ctrl+C，正在關閉...")
+    finally:
+        input("服務器已停止，請按 Enter 鍵退出...")
+
+===========================================
+
+[index.html 檔案]：
+-------------------------------------------
+<!DOCTYPE html>
+<html lang="zh_hant">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YT_DL</title>
+    <link rel="icon" href="{{ url_for('static', filename='icon.ico') }}" type="image/x-icon">
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #e8f0f2;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        .container {
+            background-color: #fff;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.2);
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+            box-sizing: border-box;
+        }
+        h1 {
+            margin-bottom: 20px;
+            color: #333;
+            font-size: 24px;
+        }
+        form {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        label {
+            width: 100%;
+            text-align: left;
+            margin-bottom: 5px;
+            color: #555;
+        }
+        input, select, button {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+            box-sizing: border-box;
+        }
+        input:focus, select:focus, button:focus {
+            outline: none;
+            border-color: #3498db;
+        }
+        button {
+            background-color: #3498db;
+            color: white;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        /* 旋轉加載動畫 */
+        .spinner {
+            margin: 20px auto;
+            width: 50px;
+            height: 50px;
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .status-message {
+            margin-top: 20px;
+            font-size: 16px;
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Youtube 下載器</h1>
+        <form id="download-form">
+            <label for="url">網址:</label>
+            <input type="text" id="url" name="url" placeholder="輸入 YouTube 連結" required>
+            <label for="format">格式:</label>
+            <select id="format" name="format">
+                <option value="mp3">MP3</option>
+                <option value="mp4">MP4</option>
+            </select>
+            <button type="submit">下載</button>
+        </form>
+        
+        <!-- 旋轉加載動畫 -->
+        <div class="spinner" id="spinner" style="display: none;"></div>
+
+        <footer style="position: absolute; bottom: 10px; right: 10px; font-size: 14px; color: #777;">
+            Copyright © 2025 Scrofic™
+        </footer>
+        
+        <div class="status-message" id="status-message"></div>
+    </div>
+    <script>
+        const spinner = document.getElementById('spinner');
+        const statusMessage = document.getElementById('status-message');
+        const form = document.getElementById('download-form');
+
+        form.addEventListener('submit', function(event) {
+            event.preventDefault();
+            statusMessage.textContent = '';
+            spinner.style.display = 'block';  // 顯示旋轉動畫
+
+            const formData = new FormData(form);
+            fetch('/download', {
+                method: 'POST',
+                body: formData
+            })
+            .then(function(response) {
+                if (!response.ok) {
+                    throw new Error("網路錯誤：" + response.status);
+                }
+                // 使用 blob() 取得二進位資料（避免解析成 JSON）
+                return response.blob().then(blob => ({
+                    blob: blob,
+                    disposition: response.headers.get("Content-Disposition")
+                }));
+            })
+            .then(function({ blob, disposition }) {
+                spinner.style.display = 'none';
+                // 從 header 取得檔案名稱 (若有設定)
+                let filename = "downloaded_file";
+                if (disposition) {
+                    const regex = /filename\*=UTF-8''(.+)/;
+                    const matches = regex.exec(disposition);
+                    if (matches && matches[1]) {
+                        filename = decodeURIComponent(matches[1]);
+                    }
+                }
+                // 利用 blob 產生臨時 URL 並建立下載鏈結
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.style.display = "none";
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                statusMessage.textContent = '下載完成！';
+            })
+            .catch(function(error) {
+                spinner.style.display = 'none';
+                statusMessage.textContent = '下載失敗：' + error.message;
+            });
+        });
+    </script>
+</body>
+</html>
+
+===========================================
+[安裝 PyInstaller]：pip install cx_Freeze
+===========================================
+
+[新增 setup.py 檔案]：
+-------------------------------------------
+import sys
+from cx_Freeze import setup, Executable
+
+build_exe_options = {
+    "include_files": [
+        ("ffmpeg.exe", "ffmpeg.exe"),
+        ("static", "static"),
+        ("templates", "templates"),
+    ],
+    # 將 yt_dlp 模組由打包內部引用（不加入自動更新功能）
+    "packages": [],
+}
+
+base = "Console" if sys.platform == "win32" else None
+
+executables = [
+    Executable(
+        script="app.py",
+        base=base,
+        target_name="YT_DL Server.exe",
+        icon="static/icon.ico",
+    )
+]
+
+setup(
+    name="YT_DL Server",
+    version="2.0.0",
+    description="YouTube Download Server",
+    options={"build_exe": build_exe_options},
+    executables=executables,
+)
+
+===========================================
+[打包程式]：python setup.py build
+===========================================
