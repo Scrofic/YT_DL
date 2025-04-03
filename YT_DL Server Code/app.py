@@ -1,5 +1,6 @@
 import os
 import sys
+import socket
 from uuid import uuid4
 from flask import Flask, request, render_template, jsonify, Response
 from urllib.parse import quote
@@ -11,10 +12,12 @@ import yt_dlp as youtube_dl
 class FilterStream:
     def __init__(self, stream):
         self.stream = stream
+
     def write(self, s):
         if "Running on" in s:
             return  # 過濾掉包含 "Running on" 的訊息
         self.stream.write(s)
+
     def flush(self):
         self.stream.flush()
 
@@ -26,20 +29,45 @@ sys.stderr = FilterStream(sys.stderr)
 # ----------------------------------------------------------------
 def resource_path(relative_path):
     try:
-        base_path = sys._MEIPASS  # cx_Freeze or PyInstaller 打包後會存在
+        base_path = sys._MEIPASS  # cx_Freeze 或 PyInstaller 打包後會存在
     except Exception:
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
 # ----------------------------------------------------------------
-# Flask 與應用程式邏輯
+# 讀取或建立 port.txt 檔案，決定伺服器所使用的端口號
 # ----------------------------------------------------------------
-# 直接使用已打包進 .exe 中的 yt_dlp 模組
+def get_port():
+    port_file = "port.txt"
+    default_port = 5000
+    if not os.path.exists(port_file):
+        try:
+            with open(port_file, "w") as f:
+                f.write(str(default_port))
+            print(f"[INFO] port.txt 不存在，已建立並設定預設端口號：{default_port}")
+        except Exception as e:
+            print(f"[ERROR] 建立 port.txt 發生錯誤：{e}")
+        return default_port
+    else:
+        try:
+            with open(port_file, "r") as f:
+                port_str = f.read().strip()
+            if not port_str:
+                port_str = str(default_port)
+            port = int(port_str)
+            return port
+        except Exception as e:
+            print(f"[ERROR] 讀取 port.txt 發生錯誤：{e}，使用預設端口號：{default_port}")
+            return default_port
+
+# ----------------------------------------------------------------
+# Flask 應用程式邏輯
+# ----------------------------------------------------------------
 app = Flask(__name__,
             static_folder=resource_path("static"),
             template_folder=resource_path("templates"))
 
-# 使用 tasks 字典存放每個下載任務的進度與狀態
+# 使用全域字典存放每個下載任務進度與狀態
 tasks = {}
 
 @app.route('/')
@@ -48,18 +76,18 @@ def index():
 
 @app.route('/download', methods=['POST'])
 def download():
-    # 為此次下載請求生成一個隨機 task_id
+    # 為此次下載請求生成一個隨機 task_id，方便追蹤任務
     task_id = str(uuid4())
     tasks[task_id] = {'progress': '0%', 'completed': False}
 
     url_link = request.form['url']
     fmt = request.form['format']
 
-    # 根據格式選擇不同的 yt-dlp 參數
+    # 根據格式選擇不同的 yt-dlp 參數，並使用更具可讀性且唯一的檔名模板
     if fmt == 'mp3':
         ydl_opts = {
             'format': 'bestaudio/best',
-            'outtmpl': f'downloads/%(title)s_{task_id}.%(ext)s',
+            'outtmpl': 'downloads/%(title)s - %(id)s.%(ext)s',
             'ffmpeg_location': resource_path('ffmpeg.exe'),
             'progress_hooks': [lambda d: progress_hook(d, task_id)],
             'postprocessors': [{
@@ -71,10 +99,12 @@ def download():
     else:  # mp4 模式
         ydl_opts = {
             'format': 'bestvideo+bestaudio/best',
-            'outtmpl': f'downloads/%(title)s_{task_id}.%(ext)s',
+            'outtmpl': 'downloads/%(title)s - %(id)s.%(ext)s',
             'ffmpeg_location': resource_path('ffmpeg.exe'),
             'progress_hooks': [lambda d: progress_hook(d, task_id)],
-            'merge_output_format': 'mp4'
+            'merge_output_format': 'mp4',
+            # 將音訊轉換成 AAC 以避免 Opus 編碼問題
+            'postprocessor_args': ['-c:a', 'aac', '-b:a', '192k'],
         }
 
     try:
@@ -82,7 +112,7 @@ def download():
             info_dict = ydl.extract_info(url_link, download=True)
             file_path = ydl.prepare_filename(info_dict)
 
-        # 如果是 mp3 模式，更新檔案副檔名
+        # 若為 mp3 模式，調整檔案副檔名
         if fmt == 'mp3':
             file_path = os.path.splitext(file_path)[0] + ".mp3"
 
@@ -137,10 +167,27 @@ def progress_status():
     return jsonify(task_info)
 
 if __name__ == '__main__':
+    # 確保 downloads 資料夾存在
     if not os.path.exists('downloads'):
         os.makedirs('downloads')
+
+    # 讀取或建立 port.txt 以取得自訂端口號
+    port = get_port()
+
+    # 印出連線網址（本機與內網）
     try:
-        app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
+        local_ip = socket.gethostbyname(socket.gethostname())
+    except Exception:
+        local_ip = "127.0.0.1"
+    print("============================================")
+    print("連線網址：")
+    print(f"（本機存取） http://localhost:{port}")
+    print(f"（內網存取） http://{local_ip}:{port}")
+    print("============================================")
+
+    # 啟動伺服器並支援多線程，方便多人同時下載
+    try:
+        app.run(host='0.0.0.0', port=port, debug=True, use_reloader=False, threaded=True)
     except KeyboardInterrupt:
         print("\n服務器偵測到 Ctrl+C，正在關閉...")
     finally:
