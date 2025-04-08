@@ -609,7 +609,7 @@ if __name__ == '__main__':
 </html>
 
 ===========================================
-[安裝 PyInstaller]：pip install cx_Freeze
+[安裝 cx_Freeze]：pip install cx_Freeze
 ===========================================
 
 [新增 setup.py 檔案]：
