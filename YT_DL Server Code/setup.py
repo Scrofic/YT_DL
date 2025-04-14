@@ -24,7 +24,7 @@ executables = [
 
 setup(
     name="YT_DL Server",
-    version="2.0.2",
+    version="2.0.3",
     description="YouTube Download Server",
     options={"build_exe": build_exe_options},
     executables=executables,

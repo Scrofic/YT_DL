@@ -126,7 +126,7 @@ def download():
     url_link = request.form['url']
     fmt = request.form['format']
     tasks[task_id]['status'] = '準備下載'
-    app.logger.info(f"任務 {task_id}: 收到請求，URL: {url_link}, 格式: {fmt}")
+    app.logger.info(f"任務 {task_id}: 收到請求，URL: {url_link}, 格式: {fmt}") # [11]
 
     # 根據格式選擇不同的 yt-dlp 參數
     if fmt == 'mp3':
@@ -135,26 +135,42 @@ def download():
             'outtmpl': 'downloads/%(title)s - %(id)s.%(ext)s',
             'ffmpeg_location': resource_path('ffmpeg.exe'),
             'progress_hooks': [lambda d: progress_hook(d, task_id)],
-            'postprocessors': [{
+            'postprocessors': [{ # [12]
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
                 'preferredquality': '192',
             }],
-            # 告訴 FFmpeg 在後處理時只顯示錯誤訊息
             'postprocessor_args': ['-loglevel', 'error'], # <--- 修改點
-            'nocheckcertificate': True,
+            'nocheckcertificate': True, # [13]
             'quiet': True,
             'no_warnings': True,
             'logtostderr': False,
         }
-    else:  # mp4 模式
+    # ----- 新增 MOV 格式的處理 -----
+    elif fmt == 'mov':
+        ydl_opts = {
+            # 使用與 MP4 類似的格式選擇器，選擇最佳的視訊和音訊流
+            'format': 'bestvideo[ext=mp4][vcodec^=avc]+bestaudio[ext=m4a]/bestvideo[ext=mp4]+bestaudio/best[ext=mp4]/best',
+            'outtmpl': 'downloads/%(title)s - %(id)s.%(ext)s', # [14]
+            'ffmpeg_location': resource_path('ffmpeg.exe'),
+            'progress_hooks': [lambda d: progress_hook(d, task_id)],
+            # 告訴 yt-dlp 將下載的流合併成 mov 容器格式
+            'merge_output_format': 'mov',
+            # 限制 FFmpeg 的輸出日誌等級，減少控制台雜訊
+            'postprocessor_args': ['-loglevel', 'error'],
+            'nocheckcertificate': True,
+            'quiet': True, # [15]
+            'no_warnings': True,
+            'logtostderr': False,
+        }
+    # ----- MOV 處理結束 -----
+    else:  # mp4 模式 (原來的 else)
         ydl_opts = {
             'format': 'bestvideo[ext=mp4][vcodec^=avc]+bestaudio[ext=m4a]/bestvideo[ext=mp4]+bestaudio/best[ext=mp4]/best',
             'outtmpl': 'downloads/%(title)s - %(id)s.%(ext)s',
             'ffmpeg_location': resource_path('ffmpeg.exe'),
             'progress_hooks': [lambda d: progress_hook(d, task_id)],
             'merge_output_format': 'mp4',
-            # 在這裡也加上 -loglevel error，確保一致性
             'postprocessor_args': ['-c:a', 'aac', '-b:a', '192k', '-loglevel', 'error'], # <--- 修改點
             'nocheckcertificate': True,
             'quiet': True,
@@ -169,7 +185,7 @@ def download():
         original_file_path = None # 用於記錄 yt-dlp 最初認為的路徑
 
         # 使用 yt-dlp 下載
-        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+        with youtube_dl.YoutubeDL(ydl_opts) as ydl: # [16]
             info_dict = ydl.extract_info(url_link, download=False) # 先獲取資訊不下載
             original_file_path = ydl.prepare_filename(info_dict) # 根據模板獲取預期路徑
             app.logger.info(f"任務 {task_id}: yt-dlp 預期原始路徑: {original_file_path}")
@@ -179,16 +195,31 @@ def download():
         # ---- 檔名修正邏輯 ----
         file_path = original_file_path # 默認使用原始計算的路徑
 
-        if fmt == 'mp3':
+        if fmt == 'mp3': # [17]
             base_path = os.path.splitext(original_file_path)[0]
             expected_mp3_path = base_path + ".mp3"
             app.logger.info(f"任務 {task_id}: MP3 格式，檢查實際 MP3 路徑: {expected_mp3_path}")
             if os.path.exists(expected_mp3_path):
                 file_path = expected_mp3_path # 更新 file_path 指向 .mp3
-                app.logger.info(f"任務 {task_id}: 找到 MP3 檔案，更新路徑為: {file_path}")
+                app.logger.info(f"任務 {task_id}: 找到 MP3 檔案，更新路徑為: {file_path}") # [18]
             else:
-                app.logger.warning(f"任務 {task_id}: 預期的 MP3 檔案 {expected_mp3_path} 未找到! 將使用原始計算路徑 {original_file_path}")
+                app.logger.warning(f"任務 {task_id}: 預期的 MP3 檔案 {expected_mp3_path} 未找到! 將使用原始計算路徑 {original_file_path}") # [19]
                 # 保持 file_path 為 original_file_path，讓後續檢查失敗
+
+        # ----- 新增 MOV 的檔名修正 -----
+        elif fmt == 'mov':
+            # 檢查 MOV 情況下是否需要修正路徑 (例如原始是 webm/mp4 但合併為 mov)
+            if not original_file_path.lower().endswith('.mov'):
+                actual_mov_path = os.path.splitext(original_file_path)[0] + ".mov"
+                app.logger.info(f"任務 {task_id}: MOV 格式，原始路徑非 mov，檢查實際 mov 路徑: {actual_mov_path}") # [20] (日誌訊息修改)
+                if os.path.exists(actual_mov_path):
+                    file_path = actual_mov_path
+                    app.logger.info(f"任務 {task_id}: 找到實際 mov 檔案，更新路徑為: {file_path}") # [20] (日誌訊息修改)
+                else:
+                    app.logger.warning(f"任務 {task_id}: 預期的 MOV 檔案 {actual_mov_path} 未找到，將繼續使用原始路徑 {original_file_path}") # [21] (日誌訊息修改)
+            # else: 原始路徑就是 .mov，無需修正
+
+        # ----- MOV 修正結束 -----
 
         elif fmt == 'mp4':
             # 檢查MP4情況下是否需要修正路徑 (例如原始是webm但合併為mp4)
@@ -202,7 +233,7 @@ def download():
                     app.logger.warning(f"任務 {task_id}: 預期的 MP4 檔案 {actual_mp4_path} 未找到，將繼續使用原始路徑 {original_file_path}")
             # else: MP4 且原始路徑就是 .mp4，無需修正
 
-        # ---- 檔名修正邏徑輯束 ----
+        # ---- 檔名修正邏輯結束 ----
 
         # 標記任務完成（下載/處理階段）
         tasks[task_id]['completed'] = True # 注意：這裡標記完成僅代表yt-dlp處理完畢
@@ -210,7 +241,7 @@ def download():
         app.logger.info(f"任務 {task_id}: 檔案準備就緒，最終檢查路徑: {file_path}")
 
         # 檢查最終確定的檔案路徑是否存在
-        if not file_path or not os.path.exists(file_path): # 增加 file_path 為 None 的檢查
+        if not file_path or not os.path.exists(file_path): # [22] # 增加 file_path 為 None 的檢查
             error_msg = f"最終檔案不存在於路徑：{file_path}"
             app.logger.error(f"任務 {task_id}: {error_msg}")
             tasks[task_id]['status'] = '失敗'
