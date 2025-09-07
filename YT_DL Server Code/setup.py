@@ -7,7 +7,6 @@ build_exe_options = {
         ("static", "static"),
         ("templates", "templates"),
     ],
-    # 將 yt_dlp 模組由打包內部引用（不加入自動更新功能）
     "packages": [],
 }
 
